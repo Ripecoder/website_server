@@ -47,6 +47,12 @@ def create_client_data():
         website = data.get("website")
         website_name = data.get("website_name")
 
+        print(name)
+        print(email)
+        print(phone)
+        print(website)
+        print(website_name)
+
         # BASIC VALIDATION
         if not name or not email:
 
