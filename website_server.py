@@ -72,17 +72,15 @@ def create_client_data():
                         client_name,
                         client_email,
                         client_phone,
-                        client_website_url,
-                        client_website_name
+                        client_website_url
                     )
                     VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    name,
+                    website_name,
                     email,
                     phone,
-                    website,
-                    website_name
+                    website
                 ))
 
                 inserted_id = cur.fetchone()[0]
