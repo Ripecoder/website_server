@@ -74,7 +74,7 @@ def create_client_data():
                         client_phone,
                         client_website_url
                     )
-                    VALUES (%s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s)
                     RETURNING id
                 """, (
                     website_name,
