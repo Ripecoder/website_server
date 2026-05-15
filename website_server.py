@@ -30,17 +30,8 @@ def create_client_data():
 
     try:
 
-        # GET JSON DATA
         data = request.get_json()
 
-        if not data:
-
-            return jsonify({
-                "success": False,
-                "message": "No JSON received"
-            }), 400
-
-        # EXTRACT FIELDS
         name = data.get("name")
         email = data.get("email")
         phone = data.get("phone")
@@ -53,15 +44,6 @@ def create_client_data():
         print(website)
         print(website_name)
 
-        # BASIC VALIDATION
-        if not name or not email:
-
-            return jsonify({
-                "success": False,
-                "message": "Missing required fields"
-            }), 400
-
-        # INSERT INTO DATABASE
         with get_conn() as conn:
 
             with conn.cursor() as cur:
@@ -75,7 +57,6 @@ def create_client_data():
                         client_website_url
                     )
                     VALUES (%s, %s, %s, %s)
-                    RETURNING id
                 """, (
                     website_name,
                     email,
@@ -83,15 +64,12 @@ def create_client_data():
                     website
                 ))
 
-                inserted_id = cur.fetchone()[0]
+                conn.commit()
 
-        print("✅ CLIENT STORED:", inserted_id)
+        print("✅ CLIENT STORED")
 
-        # SUCCESS RESPONSE
         return jsonify({
-            "success": True,
-            "message": "Client stored successfully",
-            "client_id": inserted_id
+            "success": True
         }), 200
 
     except Exception as e:
@@ -102,7 +80,6 @@ def create_client_data():
             "success": False,
             "message": str(e)
         }), 500
-
 # ── HEALTH CHECK ────────────────────────
 
 @app.route("/")
