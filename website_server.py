@@ -36,6 +36,7 @@ def create_client_data():
         phone = data.get("phone")
         website = data.get("website")
         website_name = data.get("website_name")
+        api_key = data.get("client_api_key")
 
         print("name: ",name)
         print("email: ",email)
@@ -68,7 +69,6 @@ def create_client_data():
                 api_key = existing[0]
 
             else:
-                api_key = f"vrb_live_{email.replace('@','_')}_{int(time.time())}"
 
                 cur.execute("""
                     INSERT INTO clients (
@@ -88,7 +88,7 @@ def create_client_data():
                 ))
 
         conn.commit()
-
+        print("API KEY SAVED: ",api_key)
         return jsonify({
             "success": True,
             "client_api_key": api_key
