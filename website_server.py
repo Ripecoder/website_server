@@ -29,11 +29,21 @@ def create_client_data():
     try:
         data = request.get_json()
 
+        print("DATA RECEIVED:", data)
+
         name = data.get("name")
         email = data.get("email")
         phone = data.get("phone")
         website = data.get("website")
         website_name = data.get("website_name")
+
+        print("name: ",name)
+        print("email: ",email)
+        print("phone: ",phone)
+        print("website: ",website)
+        print("website name: ",website_name)
+
+        print("DATABASE_URL EXISTS:", bool(DATABASE_URL))
 
         if not email:
             return jsonify({
