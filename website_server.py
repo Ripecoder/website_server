@@ -20,10 +20,12 @@ def get_conn():
 
 
 # ─────────────────────────────────────
-# CREATE CLIENT (POST) — FIXED
+# CREATE CLIENT (POST)
 # ─────────────────────────────────────
 @app.route("/api/client", methods=["POST"])
 def create_client_data():
+
+    conn = None
 
     try:
         data = request.get_json()
@@ -34,52 +36,62 @@ def create_client_data():
         website = data.get("website")
         website_name = data.get("website_name")
 
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        if not email:
+            return jsonify({
+                "success": False,
+                "message": "email missing"
+            }), 400
 
-                # 1. CHECK IF USER ALREADY EXISTS
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            # ── CHECK EXISTING CLIENT ──
+            cur.execute("""
+                SELECT client_api_key
+                FROM clients
+                WHERE client_email = %s
+            """, (email,))
+
+            existing = cur.fetchone()
+
+            if existing:
+                api_key = existing[0]
+
+            else:
+                api_key = f"vrb_live_{email.replace('@','_')}_{int(time.time())}"
+
                 cur.execute("""
-                    SELECT client_api_key
-                    FROM clients
-                    WHERE client_email = %s
-                """, (email,))
+                    INSERT INTO clients (
+                        client_name,
+                        client_email,
+                        client_phone,
+                        client_website_url,
+                        client_api_key
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (
+                    website_name,
+                    email,
+                    phone,
+                    website,
+                    api_key
+                ))
 
-                existing = cur.fetchone()
-
-                # 2. IF EXISTS → RETURN SAME KEY
-                if existing:
-                    api_key = existing[0]
-
-                # 3. ELSE → CREATE NEW ONCE
-                else:
-                    api_key = f"vrb_live_{email.replace('@','_')}_{int(time.time())}"
-
-                    cur.execute("""
-                        INSERT INTO clients (
-                            client_name,
-                            client_email,
-                            client_phone,
-                            client_website_url,
-                            client_api_key
-                        )
-                        VALUES (%s, %s, %s, %s, %s)
-                    """, (
-                        website_name,
-                        email,
-                        phone,
-                        website,
-                        api_key
-                    ))
-
-            conn.commit()
+        conn.commit()
 
         return jsonify({
             "success": True,
             "client_api_key": api_key
         }), 200
 
+
     except Exception as e:
+        if conn:
+            conn.rollback()
+
         print("SERVER ERROR:", str(e))
+
         return jsonify({
             "success": False,
             "message": str(e)
@@ -87,7 +99,7 @@ def create_client_data():
 
 
 # ─────────────────────────────────────
-# GET LEADS (UNCHANGED STRUCTURE)
+# GET LEADS
 # ─────────────────────────────────────
 @app.route("/api/client", methods=["GET"])
 def get_leads():
@@ -130,8 +142,10 @@ def get_leads():
 
         return jsonify({"leads": leads}), 200
 
+
     except Exception as e:
         print("SERVER ERROR:", str(e))
+
         return jsonify({
             "leads": [],
             "error": str(e)
