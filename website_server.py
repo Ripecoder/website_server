@@ -37,35 +37,36 @@ def create_client_data():
         phone = data.get("phone")
         website = data.get("website")
         website_name = data.get("website_name")
+        client_api_key = data.get("client_api_key")
 
         print(name)
         print(email)
         print(phone)
         print(website)
         print(website_name)
+        print(client_api_key)
 
         with get_conn() as conn:
 
             with conn.cursor() as cur:
 
                 cur.execute("""
-                    INSERT INTO clients
-                    (
-                        client_name,
-                        client_email,
-                        client_phone,
-                        client_website_url
-                    )
-                    VALUES (%s, %s, %s, %s)
-                """, (
-                    website_name,
-                    email,
-                    phone,
-                    website
-                ))
-
-                conn.commit()
-
+                     INSERT INTO clients
+                     (
+                     client_name,
+                     client_email,
+                     client_phone,
+                     client_website_url,
+                     client_api_key
+                     )
+                     VALUES (%s, %s, %s, %s, %s)
+                     """, (
+                     website_name,
+                     email,
+                     phone,
+                     website,
+                     client_api_key
+                     )) 
         print("✅ CLIENT STORED")
 
         return jsonify({
