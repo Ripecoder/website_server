@@ -1,19 +1,15 @@
 import os
 import psycopg
+import time
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-# ── APP ─────────────────────────────────
-
 app = Flask(__name__)
 CORS(app)
 
-# ── DATABASE CONFIG ─────────────────────
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# ── DATABASE CONNECTION ─────────────────
 
 def get_conn():
     return psycopg.connect(
@@ -22,8 +18,10 @@ def get_conn():
         prepare_threshold=None
     )
 
-# ── CREATE CLIENT (POST) ────────────────
 
+# ─────────────────────────────────────
+# CREATE CLIENT (POST) — FIXED
+# ─────────────────────────────────────
 @app.route("/api/client", methods=["POST"])
 def create_client_data():
 
@@ -35,43 +33,62 @@ def create_client_data():
         phone = data.get("phone")
         website = data.get("website")
         website_name = data.get("website_name")
-        client_api_key = data.get("client_api_key")
 
         with get_conn() as conn:
             with conn.cursor() as cur:
 
+                # 1. CHECK IF USER ALREADY EXISTS
                 cur.execute("""
-                    INSERT INTO clients (
-                        client_name,
-                        client_email,
-                        client_phone,
-                        client_website_url,
-                        client_api_key
-                    )
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (
-                    website_name,
-                    email,
-                    phone,
-                    website,
-                    client_api_key
-                ))
+                    SELECT client_api_key
+                    FROM clients
+                    WHERE client_email = %s
+                """, (email,))
+
+                existing = cur.fetchone()
+
+                # 2. IF EXISTS → RETURN SAME KEY
+                if existing:
+                    api_key = existing[0]
+
+                # 3. ELSE → CREATE NEW ONCE
+                else:
+                    api_key = f"vrb_live_{email.replace('@','_')}_{int(time.time())}"
+
+                    cur.execute("""
+                        INSERT INTO clients (
+                            client_name,
+                            client_email,
+                            client_phone,
+                            client_website_url,
+                            client_api_key
+                        )
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (
+                        website_name,
+                        email,
+                        phone,
+                        website,
+                        api_key
+                    ))
 
             conn.commit()
 
-        return jsonify({"success": True}), 200
+        return jsonify({
+            "success": True,
+            "client_api_key": api_key
+        }), 200
 
     except Exception as e:
         print("SERVER ERROR:", str(e))
-
         return jsonify({
             "success": False,
             "message": str(e)
         }), 500
 
 
-# ── GET CLIENTS (DASHBOARD) ─────────────
-
+# ─────────────────────────────────────
+# GET LEADS (UNCHANGED STRUCTURE)
+# ─────────────────────────────────────
 @app.route("/api/client", methods=["GET"])
 def get_leads():
 
@@ -91,8 +108,7 @@ def get_leads():
                         bhk,
                         special_preferences,
                         budget,
-                        intent,
-                        client_api_key
+                        intent
                     FROM leads
                     WHERE client_api_key = %s
                     ORDER BY id DESC
@@ -116,23 +132,21 @@ def get_leads():
 
     except Exception as e:
         print("SERVER ERROR:", str(e))
-
         return jsonify({
             "leads": [],
             "error": str(e)
         }), 500
 
-# ── HEALTH CHECK ────────────────────────
 
+# ─────────────────────────────────────
+# HEALTH CHECK
+# ─────────────────────────────────────
 @app.route("/")
 def home():
     return "Server running"
 
 
-# ── START SERVER ────────────────────────
-
 if __name__ == "__main__":
-
     port = int(os.environ.get("PORT", 3000))
 
     app.run(
