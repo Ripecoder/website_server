@@ -79,28 +79,23 @@ def get_leads():
         api_key = request.args.get("api_key")
 
         if not api_key:
-            return jsonify({
-                "leads": [],
-                "success": False,
-                "message": "Missing API key"
-            }), 400
+            return jsonify({"leads": []}), 400
 
         with get_conn() as conn:
             with conn.cursor() as cur:
 
                 cur.execute("""
                     SELECT 
-                        phone,
-                        email,
-                        intent,
-                        budget,
+                        phoneno,
                         location,
                         bhk,
                         special_preferences,
-                        created_at
+                        budget,
+                        intent,
+                        client_api_key
                     FROM leads
                     WHERE client_api_key = %s
-                    ORDER BY created_at DESC
+                    ORDER BY id DESC
                 """, (api_key,))
 
                 rows = cur.fetchall()
@@ -110,27 +105,23 @@ def get_leads():
         for r in rows:
             leads.append({
                 "phone": r[0],
-                "email": r[1],
-                "intent": r[2],
-                "budget": r[3],
-                "location": r[4],
-                "bhk": r[5],
-                "special_preferences": r[6],
-                "created_at": r[7]
+                "location": r[1],
+                "bhk": r[2],
+                "special_preferences": r[3],
+                "budget": r[4],
+                "intent": r[5],
             })
 
-        return jsonify({
-            "leads": leads
-        }), 200
+        return jsonify({"leads": leads}), 200
 
     except Exception as e:
         print("SERVER ERROR:", str(e))
 
         return jsonify({
             "leads": [],
-            "success": False,
-            "message": str(e)
+            "error": str(e)
         }), 500
+
 # ── HEALTH CHECK ────────────────────────
 
 @app.route("/")
