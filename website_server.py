@@ -129,7 +129,8 @@ def get_leads():
                         bhk,
                         special_preferences,
                         budget,
-                        intent
+                        intent,
+                        created_at
                     FROM leads
                     WHERE client_api_key = %s
                     ORDER BY id DESC
@@ -147,6 +148,7 @@ def get_leads():
                 "special_preferences": r[3],
                 "budget": r[4],
                 "intent": r[5],
+                "created_at": r[6],
             })
 
         return jsonify({"leads": leads}), 200
