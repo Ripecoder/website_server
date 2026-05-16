@@ -73,21 +73,35 @@ def create_client_data():
 # ── GET CLIENTS (DASHBOARD) ─────────────
 
 @app.route("/api/client", methods=["GET"])
-def get_clients():
+def get_leads():
 
     try:
+        api_key = request.args.get("api_key")
+
+        if not api_key:
+            return jsonify({
+                "leads": [],
+                "success": False,
+                "message": "Missing API key"
+            }), 400
+
         with get_conn() as conn:
             with conn.cursor() as cur:
 
                 cur.execute("""
                     SELECT 
-                        client_name,
-                        client_email,
-                        client_phone,
-                        client_website_url
-                    FROM clients
-                    ORDER BY client_name DESC
-                """)
+                        phone,
+                        email,
+                        intent,
+                        budget,
+                        location,
+                        bhk,
+                        special_preferences,
+                        created_at
+                    FROM leads
+                    WHERE client_api_key = %s
+                    ORDER BY created_at DESC
+                """, (api_key,))
 
                 rows = cur.fetchall()
 
@@ -95,10 +109,14 @@ def get_clients():
 
         for r in rows:
             leads.append({
-                "name": r[0],
+                "phone": r[0],
                 "email": r[1],
-                "phone": r[2],
-                "website": r[3]
+                "intent": r[2],
+                "budget": r[3],
+                "location": r[4],
+                "bhk": r[5],
+                "special_preferences": r[6],
+                "created_at": r[7]
             })
 
         return jsonify({
@@ -113,8 +131,6 @@ def get_clients():
             "success": False,
             "message": str(e)
         }), 500
-
-
 # ── HEALTH CHECK ────────────────────────
 
 @app.route("/")
