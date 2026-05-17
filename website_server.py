@@ -1,58 +1,179 @@
-import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
+import os
+import psycopg
+import time
 
-const supabase = createClient(
-  "https://wbwmffhegokbnfgtfufz.supabase.co",
-  "YOUR_ANON_KEY"
-);
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+app = Flask(__name__)
+CORS(app)
 
-// ─────────────────────────────────────
-// GET CLIENT STATUS
-// ─────────────────────────────────────
-async function getClientStatus(email) {
-  try {
-    const res = await fetch(
-      `https://website-server-9b3o.onrender.com/api/client/status?email=${encodeURIComponent(email)}`
-    );
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-    if (!res.ok) return { exists: false };
 
-    return await res.json();
-  } catch {
-    return { exists: false };
-  }
-}
+def get_conn():
+    return psycopg.connect(
+        DATABASE_URL,
+        sslmode="require",
+        prepare_threshold=None
+    )
 
-// ─────────────────────────────────────
-// ROUTING CORE
-// ─────────────────────────────────────
-async function checkAuth() {
-  const { data } = await supabase.auth.getSession();
-  const session = data.session;
 
-  const path = window.location.pathname;
+# ─────────────────────────────────────
+# CREATE CLIENT (POST)
+# ─────────────────────────────────────
+@app.route("/api/client", methods=["POST"])
+def create_client_data():
 
-  if (!session) {
-    if (!path.includes("login.html")) {
-      window.location.href = "login.html";
-    }
-    return;
-  }
+    conn = None
 
-  const email = session.user.email;
-  const status = await getClientStatus(email);
+    try:
+        data = request.get_json()
 
-  if (status.exists) {
-    sessionStorage.setItem("verbe_api_key", status.api_key);
+        print("DATA RECEIVED:", data)
 
-    if (!path.includes("client-dashboard.html")) {
-      window.location.href = "client-dashboard.html";
-    }
-    return;
-  }
+        name = data.get("name")
+        email = data.get("email")
+        phone = data.get("phone")
+        website = data.get("website")
+        website_name = data.get("website_name")
 
-  if (!path.includes("dashboard.html")) {
-    window.location.href = "dashboard.html";
-  }
-}
+        print("name: ",name)
+        print("email: ",email)
+        print("phone: ",phone)
+        print("website: ",website)
+        print("website name: ",website_name)
 
-checkAuth();
+        print("DATABASE_URL EXISTS:", bool(DATABASE_URL))
+
+        if not email:
+            return jsonify({
+                "success": False,
+                "message": "email missing"
+            }), 400
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            # ── CHECK EXISTING CLIENT ──
+            cur.execute("""
+                SELECT client_api_key
+                FROM clients
+                WHERE client_email = %s
+            """, (email,))
+
+            existing = cur.fetchone()
+
+            if existing:
+                api_key = existing[0]
+
+            else:
+                api_key = f"vrb_live_{email.replace('@','_')}_{int(time.time())}"
+
+                cur.execute("""
+                    INSERT INTO clients (
+                        client_name,
+                        client_email,
+                        client_phone,
+                        client_website_url,
+                        client_api_key
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (
+                    website_name,
+                    email,
+                    phone,
+                    website,
+                    api_key
+                ))
+
+        conn.commit()
+
+        return jsonify({
+            "success": True,
+            "client_api_key": api_key
+        }), 200
+
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+
+        print("SERVER ERROR:", str(e))
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+
+# ─────────────────────────────────────
+# GET LEADS
+# ─────────────────────────────────────
+@app.route("/api/client", methods=["GET"])
+def get_leads():
+
+    try:
+        api_key = request.args.get("api_key")
+
+        if not api_key:
+            return jsonify({"leads": []}), 400
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+
+                cur.execute("""
+                    SELECT 
+                        phoneno,
+                        location,
+                        bhk,
+                        special_preferences,
+                        budget,
+                        intent
+                    FROM leads
+                    WHERE client_api_key = %s
+                    ORDER BY id DESC
+                """, (api_key,))
+
+                rows = cur.fetchall()
+
+        leads = []
+
+        for r in rows:
+            leads.append({
+                "phone": r[0],
+                "location": r[1],
+                "bhk": r[2],
+                "special_preferences": r[3],
+                "budget": r[4],
+                "intent": r[5],
+            })
+
+        return jsonify({"leads": leads}), 200
+
+
+    except Exception as e:
+        print("SERVER ERROR:", str(e))
+
+        return jsonify({
+            "leads": [],
+            "error": str(e)
+        }), 500
+
+
+# ─────────────────────────────────────
+# HEALTH CHECK
+# ─────────────────────────────────────
+@app.route("/")
+def home():
+    return "Server running"
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 3000))
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=True
+    )
