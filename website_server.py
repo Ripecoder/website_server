@@ -162,7 +162,32 @@ def get_leads():
             "error": str(e)
         }), 500
 
+@app.route("/api/client/check", methods=["GET"])
+def check_client():
+    email = request.args.get("email")
 
+    if not email:
+        return jsonify({"exists": False})
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT client_api_key, client_website_url
+            FROM clients
+            WHERE client_email = %s
+        """, (email,))
+
+        row = cur.fetchone()
+
+    if row:
+        return jsonify({
+            "exists": True,
+            "api_key": row[0],
+            "website": row[1]
+        })
+
+    return jsonify({"exists": False})
+    
 # ─────────────────────────────────────
 # HEALTH CHECK
 # ─────────────────────────────────────
