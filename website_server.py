@@ -225,7 +225,8 @@ def get_client_leads():
                     budget,
                     intent,
                     created_at,
-                    attended
+                    attended,
+                    used_free_trial
                 FROM leads
                 WHERE client_api_key = %s
                 ORDER BY id DESC
@@ -246,7 +247,8 @@ def get_client_leads():
                 "budget": row[5],
                 "intent": row[6],
                 "created_at": row[7],
-                "attended": row[8]
+                "attended": row[8],
+                "used_free_trial": row[9]
             })
 
         return jsonify({
@@ -361,12 +363,14 @@ def set_subscription_time():
                     "message": "Client not found"
                 }), 404
 
-            # set subscription time
+            # set subscription time; also mark free trial used if this is the 14-day trial
             cur.execute("""
                 UPDATE clients
-                SET subscription_time = %s
+                SET subscription_time = %s,
+                    used_free_trial = CASE WHEN %s = 14 THEN true ELSE used_free_trial END
                 WHERE client_api_key = %s
             """, (
+                int(subscription_time),
                 int(subscription_time),
                 api_key
             ))
@@ -454,6 +458,61 @@ def update_lead_status():
 
     finally:
 
+        if conn:
+            conn.close()
+
+
+# ─────────────────────────────────────
+# GET TRIAL STATUS
+# ─────────────────────────────────────
+
+@app.route("/api/client/trialStatus", methods=["GET"])
+def get_trial_status():
+
+    conn = None
+
+    try:
+        api_key = request.args.get("api_key")
+
+        if not api_key:
+            return jsonify({
+                "success": False,
+                "message": "Missing API key"
+            }), 400
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                SELECT used_free_trial
+                FROM clients
+                WHERE client_api_key = %s
+            """, (api_key,))
+
+            row = cur.fetchone()
+
+            if not row:
+                return jsonify({
+                    "success": False,
+                    "message": "Client not found"
+                }), 404
+
+            return jsonify({
+                "success": True,
+                "used_free_trial": row[0] or False
+            }), 200
+
+    except Exception as e:
+
+        print("GET TRIAL STATUS ERROR:", str(e))
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+    finally:
         if conn:
             conn.close()
 
