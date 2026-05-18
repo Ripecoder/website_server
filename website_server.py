@@ -225,7 +225,7 @@ def get_client_leads():
                     budget,
                     intent,
                     created_at,
-                    attended,
+                    attended
                 FROM leads
                 WHERE client_api_key = %s
                 ORDER BY id DESC
