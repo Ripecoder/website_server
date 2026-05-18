@@ -266,20 +266,16 @@ def get_client_leads():
             conn.close()
 
 # ─────────────────────────────────────
-# STORE / GET SUBSCRIPTION TIME
+# STORE / GET SUBSCRIPTION TIME READ ONLY
 # ─────────────────────────────────────
 
-@app.route("/api/client/time", methods=["POST"])
-def manage_subscription_time():
+@app.route("/api/client/time", methods=["GET"])
+def get_subscription_time():
 
     conn = None
 
     try:
-
-        data = request.get_json()
-
-        api_key = data.get("api_key")
-        subscription_time = data.get("subscription_time")
+        api_key = request.args.get("api_key")
 
         if not api_key:
             return jsonify({
@@ -291,63 +287,28 @@ def manage_subscription_time():
 
         with conn.cursor() as cur:
 
-            # CHECK EXISTING TIME
-
             cur.execute("""
                 SELECT subscription_time
                 FROM clients
                 WHERE client_api_key = %s
             """, (api_key,))
 
-            existing = cur.fetchone()
+            row = cur.fetchone()
 
-            # NO ROW FOUND
-
-            if not existing:
+            if not row:
                 return jsonify({
                     "success": False,
                     "message": "Client not found"
                 }), 404
 
-            current_time = existing[0]
-
-            # IF DATABASE EMPTY
-            # USE NEW VALUE
-
-            if current_time is None:
-
-                final_time = subscription_time
-
-            else:
-
-                # KEEP EXISTING TIME
-
-                final_time = current_time
-
-            # UPDATE DATABASE
-
-            cur.execute("""
-                UPDATE clients
-                SET subscription_time = %s
-                WHERE client_api_key = %s
-            """, (
-                final_time,
-                api_key
-            ))
-
-            conn.commit()
-
             return jsonify({
                 "success": True,
-                "subscription_time": final_time
+                "subscription_time": row[0]  # can be NULL
             }), 200
 
     except Exception as e:
 
-        if conn:
-            conn.rollback()
-
-        print("TIME ERROR:", str(e))
+        print("GET TIME ERROR:", str(e))
 
         return jsonify({
             "success": False,
@@ -355,9 +316,80 @@ def manage_subscription_time():
         }), 500
 
     finally:
-
         if conn:
             conn.close()
+
+# ─────────────────────────────────────
+# SET SUBSCRIPTION TIME (WRITE ONLY)
+# ─────────────────────────────────────
+
+@app.route("/api/client/time/set", methods=["POST"])
+def set_subscription_time():
+
+    conn = None
+
+    try:
+        data = request.get_json()
+
+        api_key = data.get("api_key")
+        subscription_time = data.get("subscription_time")  # 14 or 30
+
+        if not api_key or not subscription_time:
+            return jsonify({
+                "success": False,
+                "message": "Missing fields"
+            }), 400
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            # ensure client exists
+            cur.execute("""
+                SELECT id
+                FROM clients
+                WHERE client_api_key = %s
+            """, (api_key,))
+
+            if not cur.fetchone():
+                return jsonify({
+                    "success": False,
+                    "message": "Client not found"
+                }), 404
+
+            # set subscription time
+            cur.execute("""
+                UPDATE clients
+                SET subscription_time = %s
+                WHERE client_api_key = %s
+            """, (
+                int(subscription_time),
+                api_key
+            ))
+
+            conn.commit()
+
+            return jsonify({
+                "success": True,
+                "subscription_time": subscription_time
+            }), 200
+
+    except Exception as e:
+
+        if conn:
+            conn.rollback()
+
+        print("SET TIME ERROR:", str(e))
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+    finally:
+        if conn:
+            conn.close()
+
 # ─────────────────────────────────────
 # HEALTH CHECK
 # ─────────────────────────────────────
