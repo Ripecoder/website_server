@@ -217,13 +217,15 @@ def get_client_leads():
 
             cur.execute("""
                 SELECT
+                    id,
                     phoneno,
                     location,
                     bhk,
                     special_preferences,
                     budget,
                     intent,
-                    created_at
+                    created_at,
+                    attended
                 FROM leads
                 WHERE client_api_key = %s
                 ORDER BY id DESC
@@ -236,13 +238,15 @@ def get_client_leads():
         for row in rows:
 
             leads.append({
-                "phone": row[0],
-                "location": row[1],
-                "bhk": row[2],
-                "special_preferences": row[3],
-                "budget": row[4],
-                "intent": row[5],
-                "created_at": row[6]
+                "id": row[0],
+                "phone": row[1],
+                "location": row[2],
+                "bhk": row[3],
+                "special_preferences": row[4],
+                "budget": row[5],
+                "intent": row[6],
+                "created_at": row[7],
+                "attended": row[8]
             })
 
         return jsonify({
@@ -389,6 +393,70 @@ def set_subscription_time():
     finally:
         if conn:
             conn.close()
+
+# ─────────────────────────────────────
+# UPDATE LEAD ATTENDED STATUS
+# ─────────────────────────────────────
+
+@app.route("/api/client/updateLeadStatus", methods=["POST"])
+def update_lead_status():
+
+    conn = None
+
+    try:
+
+        data = request.get_json()
+
+        api_key = data.get("api_key")
+        lead_id = data.get("lead_id")
+        attended = data.get("attended")
+
+        if not api_key or lead_id is None or attended is None:
+            return jsonify({
+                "success": False,
+                "message": "Missing fields"
+            }), 400
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            # only update if lead belongs to this client
+            cur.execute("""
+                UPDATE leads
+                SET attended = %s
+                WHERE id = %s AND client_api_key = %s
+            """, (bool(attended), int(lead_id), api_key))
+
+            if cur.rowcount == 0:
+                return jsonify({
+                    "success": False,
+                    "message": "Lead not found or unauthorized"
+                }), 404
+
+        conn.commit()
+
+        return jsonify({
+            "success": True
+        }), 200
+
+    except Exception as e:
+
+        if conn:
+            conn.rollback()
+
+        print("UPDATE LEAD STATUS ERROR:", str(e))
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+    finally:
+
+        if conn:
+            conn.close()
+
 
 # ─────────────────────────────────────
 # HEALTH CHECK
