@@ -226,7 +226,6 @@ def get_client_leads():
                     intent,
                     created_at,
                     attended,
-                    used_free_trial
                 FROM leads
                 WHERE client_api_key = %s
                 ORDER BY id DESC
@@ -247,13 +246,12 @@ def get_client_leads():
                 "budget": row[5],
                 "intent": row[6],
                 "created_at": row[7],
-                "attended": row[8],
-                "used_free_trial": row[9]
+                "attended": row[8]
             })
 
         return jsonify({
             "success": True,
-            "leads": leads
+            "leads": leads,
         }), 200
 
     except Exception as e:
@@ -294,7 +292,8 @@ def get_subscription_time():
         with conn.cursor() as cur:
 
             cur.execute("""
-                SELECT subscription_time
+                SELECT subscription_time,
+                used_free_trial
                 FROM clients
                 WHERE client_api_key = %s
             """, (api_key,))
@@ -309,7 +308,8 @@ def get_subscription_time():
 
             return jsonify({
                 "success": True,
-                "subscription_time": row[0]  # can be NULL
+                "subscription_time": row[0],
+                "used_free_trial": row[1]  # can be NULL
             }), 200
 
     except Exception as e:
