@@ -19,9 +19,10 @@ def get_conn():
 
 
 # ─────────────────────────────────────
-# CREATE CLIENT (POST)
+# CREATE CLIENT (POST) to check if client exists
 # ─────────────────────────────────────
-@app.route("/api/client", methods=["POST"])
+
+@app.route("/api/client/auth", methods=["POST"])
 def create_client_data():
 
     conn = None
@@ -29,35 +30,19 @@ def create_client_data():
     try:
         data = request.get_json()
 
-        print("DATA RECEIVED:", data)
-
-        name = data.get("name")
         email = data.get("email")
-        phone = data.get("phone")
-        website = data.get("website")
-        website_name = data.get("website_name")
-
-        print("name: ",name)
-        print("email: ",email)
-        print("phone: ",phone)
-        print("website: ",website)
-        print("website name: ",website_name)
-
-        print("DATABASE_URL EXISTS:", bool(DATABASE_URL))
-
         if not email:
             return jsonify({
-                "success": False,
-                "message": "email missing"
+                "success": False, 
+                "message": "Email required"
             }), 400
 
         conn = get_conn()
 
         with conn.cursor() as cur:
 
-            # ── CHECK EXISTING CLIENT ──
             cur.execute("""
-                SELECT client_api_key
+                SELECT client_email, client_api_key
                 FROM clients
                 WHERE client_email = %s
             """, (email,))
@@ -65,102 +50,303 @@ def create_client_data():
             existing = cur.fetchone()
 
             if existing:
-                api_key = existing[0]
+
+                return jsonify({
+                    "success": True,
+                    "exists": True,
+                    "client_data": {
+                        "email": existing[0],
+                        "api_key": existing[1]
+                    }
+                })
 
             else:
+
                 api_key = f"vrb_live_{email.replace('@','_')}_{int(time.time())}"
 
                 cur.execute("""
                     INSERT INTO clients (
-                        client_name,
                         client_email,
-                        client_phone,
-                        client_website_url,
                         client_api_key
                     )
-                    VALUES (%s, %s, %s, %s, %s)
+                    VALUES (%s, %s)
                 """, (
-                    website_name,
                     email,
-                    phone,
-                    website,
                     api_key
                 ))
+
+                conn.commit()
+
+                return jsonify({
+                    "success": True,
+                    "exists": False,
+                    "client_data": {
+                        "email": email,
+                        "api_key": api_key
+                    }
+                })
+
+    except Exception as e:
+
+        if conn:
+            conn.rollback()
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+    
+# ─────────────────────────────────────
+# STORE CLIENT ONBOARDING DATA
+# ─────────────────────────────────────
+
+@app.route("/api/client/store", methods=["POST"])
+def store_client_data():
+
+    conn = None
+
+    try:
+
+        data = request.get_json()
+
+        name = data.get("name")
+        email = data.get("email")
+        phone = data.get("phone")
+        website = data.get("website")
+        website_name = data.get("website_name")
+        client_api_key = data.get("client_api_key")
+
+        # ── VALIDATION ─────────────────────
+
+        if not email or not client_api_key:
+            return jsonify({
+                "success": False,
+                "message": "Missing required fields"
+            }), 400
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            # ── CREATING NEW CLIENT ─────────────────────
+
+            cur.execute("""
+                INSERT INTO clients (
+                    client_name,
+                    client_phone,
+                    client_website_url,
+                    client_api_key,
+                    client_email,
+                    user_name
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                website_name,
+                phone,
+                website,
+                client_api_key,
+                email,
+                name
+            ))
 
         conn.commit()
 
         return jsonify({
             "success": True,
-            "client_api_key": api_key
+            "message": "Client data stored"
         }), 200
 
-
     except Exception as e:
+
         if conn:
             conn.rollback()
 
-        print("SERVER ERROR:", str(e))
+        print("STORE CLIENT ERROR:", str(e))
 
         return jsonify({
             "success": False,
             "message": str(e)
         }), 500
 
+    finally:
+
+        if conn:
+            conn.close()
 
 # ─────────────────────────────────────
 # GET LEADS
 # ─────────────────────────────────────
-@app.route("/api/client", methods=["GET"])
-def get_leads():
+# ─────────────────────────────────────
+# GET CLIENT LEADS
+# ─────────────────────────────────────
+
+@app.route("/api/client/leads", methods=["POST"])
+def get_client_leads():
+
+    conn = None
 
     try:
-        api_key = request.args.get("api_key")
+
+        data = request.get_json()
+
+        api_key = data.get("api_key")
 
         if not api_key:
-            return jsonify({"leads": []}), 400
+            return jsonify({
+                "success": False,
+                "message": "Missing API key"
+            }), 400
 
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        conn = get_conn()
 
-                cur.execute("""
-                    SELECT 
-                        phoneno,
-                        location,
-                        bhk,
-                        special_preferences,
-                        budget,
-                        intent
-                    FROM leads
-                    WHERE client_api_key = %s
-                    ORDER BY id DESC
-                """, (api_key,))
+        with conn.cursor() as cur:
 
-                rows = cur.fetchall()
+            # ONLY GET LEADS BELONGING
+            # TO THIS CLIENT API KEY
+
+            cur.execute("""
+                SELECT
+                    phoneno,
+                    location,
+                    bhk,
+                    special_preferences,
+                    budget,
+                    intent,
+                    created_at
+                FROM leads
+                WHERE client_api_key = %s
+                ORDER BY id DESC
+            """, (api_key,))
+
+            rows = cur.fetchall()
 
         leads = []
 
-        for r in rows:
+        for row in rows:
+
             leads.append({
-                "phone": r[0],
-                "location": r[1],
-                "bhk": r[2],
-                "special_preferences": r[3],
-                "budget": r[4],
-                "intent": r[5],
+                "phone": row[0],
+                "location": row[1],
+                "bhk": row[2],
+                "special_preferences": row[3],
+                "budget": row[4],
+                "intent": row[5],
+                "created_at": row[6]
             })
 
-        return jsonify({"leads": leads}), 200
-
+        return jsonify({
+            "success": True,
+            "leads": leads
+        }), 200
 
     except Exception as e:
-        print("SERVER ERROR:", str(e))
+
+        print("GET LEADS ERROR:", str(e))
 
         return jsonify({
-            "leads": [],
-            "error": str(e)
+            "success": False,
+            "message": str(e),
+            "leads": []
         }), 500
 
+    finally:
 
+        if conn:
+            conn.close()
+
+# ─────────────────────────────────────
+# STORE / GET SUBSCRIPTION TIME
+# ─────────────────────────────────────
+
+@app.route("/api/client/time", methods=["POST"])
+def manage_subscription_time():
+
+    conn = None
+
+    try:
+
+        data = request.get_json()
+
+        api_key = data.get("api_key")
+        subscription_time = data.get("subscription_time")
+
+        if not api_key:
+            return jsonify({
+                "success": False,
+                "message": "Missing API key"
+            }), 400
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            # CHECK EXISTING TIME
+
+            cur.execute("""
+                SELECT subscription_time
+                FROM clients
+                WHERE client_api_key = %s
+            """, (api_key,))
+
+            existing = cur.fetchone()
+
+            # NO ROW FOUND
+
+            if not existing:
+                return jsonify({
+                    "success": False,
+                    "message": "Client not found"
+                }), 404
+
+            current_time = existing[0]
+
+            # IF DATABASE EMPTY
+            # USE NEW VALUE
+
+            if current_time is None:
+
+                final_time = subscription_time
+
+            else:
+
+                # KEEP EXISTING TIME
+
+                final_time = current_time
+
+            # UPDATE DATABASE
+
+            cur.execute("""
+                UPDATE clients
+                SET subscription_time = %s
+                WHERE client_api_key = %s
+            """, (
+                final_time,
+                api_key
+            ))
+
+            conn.commit()
+
+            return jsonify({
+                "success": True,
+                "subscription_time": final_time
+            }), 200
+
+    except Exception as e:
+
+        if conn:
+            conn.rollback()
+
+        print("TIME ERROR:", str(e))
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+    finally:
+
+        if conn:
+            conn.close()
 # ─────────────────────────────────────
 # HEALTH CHECK
 # ─────────────────────────────────────
