@@ -147,6 +147,8 @@ def store_client_data():
         email = data.get("email")
         phone = data.get("phone")
         website = data.get("website")
+        if website:
+            website = website.rstrip("/")
         website_name = data.get("website_name")
         client_api_key = data.get("client_api_key")
 
