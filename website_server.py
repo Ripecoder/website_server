@@ -143,14 +143,21 @@ def store_client_data():
 
             cur.execute("""
                 INSERT INTO clients (
-                    client_name,
-                    client_phone,
-                    client_website_url,
-                    client_api_key,
-                    client_email,
-                    user_name
-                )
-                VALUES (%s, %s, %s, %s, %s, %s)
+                client_name,
+                client_phone,
+                client_website_url,
+                client_api_key,
+                client_email,
+                user_name
+            ) 
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (client_api_key)
+            DO UPDATE SET
+                client_name = EXCLUDED.client_name,
+                client_phone = EXCLUDED.client_phone,
+                client_website_url = EXCLUDED.client_website_url,
+                client_email = EXCLUDED.client_email,
+                user_name = EXCLUDED.user_name
             """, (
                 website_name,
                 phone,
