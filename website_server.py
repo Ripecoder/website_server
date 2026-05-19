@@ -53,7 +53,13 @@ def create_client_data():
         with conn.cursor() as cur:
 
             cur.execute("""
-                SELECT client_email, client_api_key
+                SELECT
+                    client_email,
+                    client_api_key,
+                    client_name,
+                    client_phone,
+                    client_website_url,
+                    user_name
                 FROM clients
                 WHERE client_email = %s
             """, (email,))
@@ -61,13 +67,24 @@ def create_client_data():
             existing = cur.fetchone()
 
             if existing:
+                onboarded = all([
+                    existing[2],
+                    existing[3],
+                    existing[4],
+                    existing[5]
+                ])
 
                 return jsonify({
                     "success": True,
                     "exists": True,
+                    "onboarded": onboarded,
                     "client_data": {
                         "email": existing[0],
-                        "api_key": existing[1]
+                        "api_key": existing[1],
+                        "client_name": existing[2],
+                        "phone": existing[3],
+                        "website": existing[4],
+                        "user_name": existing[5]
                     }
                 })
 
@@ -91,6 +108,7 @@ def create_client_data():
                 return jsonify({
                     "success": True,
                     "exists": False,
+                    "onboarded": False,
                     "client_data": {
                         "email": email,
                         "api_key": api_key
@@ -106,6 +124,11 @@ def create_client_data():
             "success": False,
             "message": str(e)
         }), 500
+
+    finally:
+
+        if conn:
+            conn.close()
     
 # ─────────────────────────────────────
 # STORE CLIENT ONBOARDING DATA
@@ -129,7 +152,7 @@ def store_client_data():
 
         # ── VALIDATION ─────────────────────
 
-        if not email or not client_api_key:
+        if not name or not email or not phone or not website or not website_name or not client_api_key:
             return jsonify({
                 "success": False,
                 "message": "Missing required fields"
@@ -171,7 +194,16 @@ def store_client_data():
 
         return jsonify({
             "success": True,
-            "message": "Client data stored"
+            "message": "Client data stored",
+            "onboarded": True,
+            "client_data": {
+                "email": email,
+                "api_key": client_api_key,
+                "client_name": website_name,
+                "phone": phone,
+                "website": website,
+                "user_name": name
+            }
         }), 200
 
     except Exception as e:
