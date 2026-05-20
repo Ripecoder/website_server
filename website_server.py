@@ -1,9 +1,16 @@
+import hashlib
+import hmac
 import os
 import psycopg
 import time
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
+try:
+    import razorpay
+except ImportError:
+    razorpay = None
 
 app = Flask(__name__)
 
@@ -19,6 +26,9 @@ CORS(
 )
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
+MONTHLY_PLAN_AMOUNT_PAISE = 499900
 
 
 def get_conn():
@@ -379,12 +389,20 @@ def set_subscription_time():
         data = request.get_json()
 
         api_key = data.get("api_key")
-        subscription_time = data.get("subscription_time")  # 14 or 30
+        subscription_time = data.get("subscription_time")  # trial only: 14
 
         if not api_key or not subscription_time:
             return jsonify({
                 "success": False,
                 "message": "Missing fields"
+            }), 400
+
+        subscription_time = int(subscription_time)
+
+        if subscription_time != 14:
+            return jsonify({
+                "success": False,
+                "message": "Paid plans must be activated through payment verification"
             }), 400
 
         conn = get_conn()
@@ -408,11 +426,10 @@ def set_subscription_time():
             cur.execute("""
                 UPDATE clients
                 SET subscription_time = %s,
-                    used_free_trial = CASE WHEN %s = 14 THEN true ELSE used_free_trial END
+                    used_free_trial = true
                 WHERE client_api_key = %s
             """, (
-                int(subscription_time),
-                int(subscription_time),
+                subscription_time,
                 api_key
             ))
 
@@ -547,6 +564,167 @@ def get_trial_status():
     except Exception as e:
 
         print("GET TRIAL STATUS ERROR:", str(e))
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+    finally:
+        if conn:
+            conn.close()
+
+
+# ─────────────────────────────────────
+# RAZORPAY — CREATE ORDER
+# ─────────────────────────────────────
+
+def get_razorpay_client():
+    if not razorpay or not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        return None
+
+    return razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+
+
+def verify_razorpay_signature(order_id, payment_id, signature):
+    if not RAZORPAY_KEY_SECRET:
+        return False
+
+    payload = f"{order_id}|{payment_id}".encode("utf-8")
+    expected = hmac.new(
+        RAZORPAY_KEY_SECRET.encode("utf-8"),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature)
+
+
+@app.route("/api/payment/create-order", methods=["POST"])
+def create_payment_order():
+
+    conn = None
+
+    try:
+        data = request.get_json() or {}
+        api_key = data.get("api_key")
+
+        if not api_key:
+            return jsonify({
+                "success": False,
+                "message": "Missing API key"
+            }), 400
+
+        client = get_razorpay_client()
+
+        if not client:
+            return jsonify({
+                "success": False,
+                "message": "Payment gateway is not configured on the server"
+            }), 503
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id
+                FROM clients
+                WHERE client_api_key = %s
+            """, (api_key,))
+
+            if not cur.fetchone():
+                return jsonify({
+                    "success": False,
+                    "message": "Client not found"
+                }), 404
+
+        order = client.order.create({
+            "amount": MONTHLY_PLAN_AMOUNT_PAISE,
+            "currency": "INR",
+            "receipt": f"funnelos_{api_key[-12:]}_{int(time.time())}",
+            "payment_capture": 1
+        })
+
+        return jsonify({
+            "success": True,
+            "order_id": order["id"],
+            "amount": order["amount"],
+            "currency": order["currency"],
+            "key_id": RAZORPAY_KEY_ID
+        }), 200
+
+    except Exception as e:
+        print("CREATE ORDER ERROR:", str(e))
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.route("/api/payment/verify", methods=["POST"])
+def verify_payment():
+
+    conn = None
+
+    try:
+        data = request.get_json() or {}
+
+        api_key = data.get("api_key")
+        order_id = data.get("razorpay_order_id")
+        payment_id = data.get("razorpay_payment_id")
+        signature = data.get("razorpay_signature")
+
+        if not api_key or not order_id or not payment_id or not signature:
+            return jsonify({
+                "success": False,
+                "message": "Missing payment verification fields"
+            }), 400
+
+        if not verify_razorpay_signature(order_id, payment_id, signature):
+            return jsonify({
+                "success": False,
+                "message": "Invalid payment signature"
+            }), 400
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id
+                FROM clients
+                WHERE client_api_key = %s
+            """, (api_key,))
+
+            if not cur.fetchone():
+                return jsonify({
+                    "success": False,
+                    "message": "Client not found"
+                }), 404
+
+            cur.execute("""
+                UPDATE clients
+                SET subscription_time = 30
+                WHERE client_api_key = %s
+            """, (api_key,))
+
+            conn.commit()
+
+        return jsonify({
+            "success": True,
+            "subscription_time": 30,
+            "message": "Payment verified and subscription activated"
+        }), 200
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+
+        print("VERIFY PAYMENT ERROR:", str(e))
 
         return jsonify({
             "success": False,
