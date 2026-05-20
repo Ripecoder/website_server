@@ -19,7 +19,7 @@ CORS(
     resources={
         r"/*": {
             "origins": [
-                "https://verve-lemon-nine.vercel.app"
+                "https://funnelos-ten.vercel.app"
             ]
         }
     }
