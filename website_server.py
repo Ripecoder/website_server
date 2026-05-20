@@ -735,7 +735,11 @@ def verify_payment():
         if conn:
             conn.close()
 
+#uptime robot 
 
+@app.route("/health")
+def health():
+    return "OK", 200
 # ─────────────────────────────────────
 # HEALTH CHECK
 # ─────────────────────────────────────
