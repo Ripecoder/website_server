@@ -19,7 +19,7 @@ CORS(
     resources={
         r"/*": {
             "origins": [
-                "https://funnelos-ten.vercel.app"
+                "https://nexulith.vercel.app"
             ]
         }
     }
