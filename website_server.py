@@ -4,7 +4,7 @@ import os
 import psycopg
 import time
 
-from datetime import datetime
+from datetime import datetime,timezone
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -362,7 +362,7 @@ def get_subscription_time():
             if expires_on is None:
                 days_left = 0
             else:
-                days_left = max(0, (expires_on - datetime.utcnow()).days)
+                days_left = max(0, (expires_on - datetime.now(timezone.utc)).days)
 
             return jsonify({
                 "success": True,
@@ -727,7 +727,7 @@ def verify_payment():
             # otherwise extend from now
             existing_expires = row[0]
 
-            if existing_expires and existing_expires > datetime.utcnow():
+            if existing_expires and existing_expires > datetime.now(timezone.utc):
                 base = "expires_on"
             else:
                 base = "NOW()"
