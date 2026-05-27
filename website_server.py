@@ -4,7 +4,7 @@ import os
 import psycopg
 import time
 
-from datetime import datetime,timezone
+from datetime import datetime,timezone, timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -31,6 +31,10 @@ RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 MONTHLY_PLAN_AMOUNT_PAISE = 499900
 
+rzp_client = razorpay.Client(auth=(
+    RAZORPAY_KEY_ID,
+    RAZORPAY_KEY_SECRET
+))
 
 def get_conn():
     return psycopg.connect(
@@ -264,9 +268,6 @@ def get_client_leads():
 
         with conn.cursor() as cur:
 
-            # ONLY GET LEADS BELONGING
-            # TO THIS CLIENT API KEY
-
             cur.execute("""
                 SELECT
                     id,
@@ -280,7 +281,7 @@ def get_client_leads():
                     attended
                 FROM leads
                 WHERE client_api_key = %s
-                ORDER BY id DESC
+                ORDER BY created_at DESC
             """, (api_key,))
 
             rows = cur.fetchall()
@@ -297,23 +298,22 @@ def get_client_leads():
                 "special_preferences": row[4],
                 "budget": row[5],
                 "intent": row[6],
-                "created_at": row[7],
+                "created_at": row[7].isoformat() if row[7] else None,
                 "attended": row[8]
             })
 
         return jsonify({
             "success": True,
-            "leads": leads,
-        }), 200
+            "leads": leads
+        })
 
     except Exception as e:
 
-        print("GET LEADS ERROR:", str(e))
+        print("LOAD LEADS ERROR:", str(e))
 
         return jsonify({
             "success": False,
-            "message": str(e),
-            "leads": []
+            "message": str(e)
         }), 500
 
     finally:
@@ -322,16 +322,228 @@ def get_client_leads():
             conn.close()
 
 # ─────────────────────────────────────
-# STORE / GET SUBSCRIPTION TIME READ ONLY
+# CHECK CLIENT EXISTS
 # ─────────────────────────────────────
-
-@app.route("/api/client/time", methods=["GET"])
-def get_subscription_time():
+def check_client(api_key):
 
     conn = None
 
     try:
-        api_key = request.args.get("api_key")
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                SELECT client_api_key
+                FROM clients
+                WHERE client_api_key = %s
+            """, (api_key,))
+
+            existing = cur.fetchone()
+
+            return bool(existing)
+
+    finally:
+        if conn:
+            conn.close()
+
+
+# ─────────────────────────────────────
+# CHECK IF TRIAL ALREADY USED
+# ─────────────────────────────────────
+def check_has_used_trial(api_key):
+
+    conn = None
+
+    try:
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                SELECT trial_used
+                FROM clients
+                WHERE client_api_key = %s
+            """, (api_key,))
+
+            existing = cur.fetchone()
+
+            if not existing:
+                return False
+
+            trial_used = existing[0]
+
+            return bool(trial_used)
+
+    finally:
+        if conn:
+            conn.close()
+
+
+# ─────────────────────────────────────
+# FREE TRIAL ENDPOINT
+# ─────────────────────────────────────
+@app.route("/api/client/time/free_trial", methods=["POST"])
+def set_free_time():
+
+    conn = None
+
+    try:
+
+        data = request.get_json()
+
+        api_key = data.get("api_key")
+
+        if not api_key:
+            return jsonify({
+                "success": False,
+                "message": "Missing API key"
+            }), 400
+
+        exists = check_client(api_key)
+
+        has_used_free_trial = check_has_used_trial(api_key)
+
+        if not exists or has_used_free_trial:
+            return jsonify({
+                "success": False
+            }), 200
+
+        # set expiry date
+        expiry_date = datetime.now(timezone.utc) + timedelta(days=14)
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                UPDATE clients
+                SET
+                    subscription_end_time = %s,
+                    trial_used = TRUE
+                WHERE client_api_key = %s
+            """, (
+                expiry_date,
+                api_key
+            ))
+
+            conn.commit()
+
+        return jsonify({
+            "success": True,
+            "subscription_time": 14
+        }), 200
+
+    except Exception as e:
+
+        print("set client subscription error:", str(e))
+
+        return jsonify({
+            "success": False
+        }), 500
+
+    finally:
+
+        if conn:
+            conn.close()
+
+@app.route("/api/payment/create-order", methods=["POST"])
+def create_order():
+
+    try:
+        data = request.get_json()
+        api_key = data.get("api_key")
+
+        if not api_key:
+            return jsonify({"success": False}), 400
+
+        # fixed plan (do NOT trust frontend amount)
+        amount = MONTHLY_PLAN_AMOUNT_PAISE
+
+        order = rzp_client.order.create({
+            "amount": amount,
+            "currency": "INR",
+            "payment_capture": 1,
+            "notes": {
+                "api_key": api_key
+            }
+        })
+
+        return jsonify({
+            "success": True,
+            "order_id": order["id"],
+            "amount": amount,
+            "key_id": RAZORPAY_KEY_ID
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route("/api/payment/verify", methods=["POST"])
+def verify_payment():
+
+    try:
+        data = request.get_json()
+
+        razorpay_order_id = data.get("razorpay_order_id")
+        razorpay_payment_id = data.get("razorpay_payment_id")
+        razorpay_signature = data.get("razorpay_signature")
+
+        api_key = data.get("api_key")
+
+        if not all([razorpay_order_id, razorpay_payment_id, razorpay_signature, api_key]):
+            return jsonify({"success": False}), 400
+
+        # signature verification
+        msg = f"{razorpay_order_id}|{razorpay_payment_id}"
+
+        generated_signature = hmac.new(
+            RAZORPAY_KEY_SECRET.encode(),
+            msg.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        if generated_signature != razorpay_signature:
+            return jsonify({"success": False, "message": "Invalid signature"}), 400
+
+        # PAYMENT VALID → activate subscription
+        expiry_date = datetime.now(timezone.utc) + timedelta(days=30)
+
+        conn = get_conn()
+
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                UPDATE clients
+                SET subscription_end_time = %s
+                WHERE client_api_key = %s
+                """, (
+                expiry_date,
+                api_key
+            ))
+
+            conn.commit()
+
+        return jsonify({"success": True})
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+# ─────────────────────────────────────
+# CHECK SUBSCRIPTION STATUS
+# ─────────────────────────────────────
+
+@app.route("/api/client/subscription-status", methods=["POST"])
+def check_subscription_status():
+
+    conn = None
+
+    try:
+
+        data = request.get_json()
+
+        api_key = data.get("api_key")
+
+        # ── VALIDATION ─────────────────────
 
         if not api_key:
             return jsonify({
@@ -343,38 +555,54 @@ def get_subscription_time():
 
         with conn.cursor() as cur:
 
+            # GET EXPIRY DATE
             cur.execute("""
-                SELECT expires_on, used_free_trial, is_active
+                SELECT subscription_end_time
                 FROM clients
                 WHERE client_api_key = %s
             """, (api_key,))
 
-            row = cur.fetchone()
+            result = cur.fetchone()
 
-            if not row:
-                return jsonify({
-                    "success": False,
-                    "message": "Client not found"
-                }), 404
+        # CLIENT NOT FOUND
+        if not result:
+            return jsonify({
+                "success": False,
+                "message": "Client not found"
+            }), 404
 
-            expires_on, used_free_trial, is_active = row
+        expiry_date = result[0]
 
-            if expires_on is None:
-                days_left = 0
-            else:
-                days_left = max(0, (expires_on - datetime.now(timezone.utc)).days)
-
+        # NO SUBSCRIPTION
+        if not expiry_date:
             return jsonify({
                 "success": True,
-                "days_left": days_left,
-                "expires_on": expires_on.isoformat() if expires_on else None,
-                "used_free_trial": used_free_trial or False,
-                "is_active": is_active or False
+                "subscription_active": False,
+                "days_remaining": 0,
+                "expiry_date": None
             }), 200
+
+        # CURRENT UTC TIME
+        current_time = datetime.now(timezone.utc)
+
+        # CHECK ACTIVE STATUS
+        subscription_active = expiry_date > current_time
+
+        # CALCULATE DAYS LEFT
+        time_remaining = expiry_date - current_time
+
+        days_remaining = max(0, time_remaining.days)
+
+        return jsonify({
+            "success": True,
+            "subscription_active": subscription_active,
+            "days_remaining": days_remaining,
+            "expiry_date": expiry_date.isoformat()
+        }), 200
 
     except Exception as e:
 
-        print("GET TIME ERROR:", str(e))
+        print("SUBSCRIPTION STATUS ERROR:", str(e))
 
         return jsonify({
             "success": False,
@@ -382,99 +610,11 @@ def get_subscription_time():
         }), 500
 
     finally:
+
         if conn:
             conn.close()
 
-# ─────────────────────────────────────
-# SET SUBSCRIPTION TIME (WRITE ONLY)
-# ─────────────────────────────────────
-
-@app.route("/api/client/time/set", methods=["POST"])
-def set_subscription_time():
-
-    conn = None
-
-    try:
-        data = request.get_json()
-
-        api_key = data.get("api_key")
-        subscription_time = data.get("subscription_time")
-
-        if not api_key or not subscription_time:
-            return jsonify({
-                "success": False,
-                "message": "Missing fields"
-            }), 400
-
-        subscription_time = int(subscription_time)
-
-        if subscription_time != 14:
-            return jsonify({
-                "success": False,
-                "message": "Paid plans must be activated through payment verification"
-            }), 400
-
-        conn = get_conn()
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-                SELECT id, used_free_trial
-                FROM clients
-                WHERE client_api_key = %s
-            """, (api_key,))
-
-            row = cur.fetchone()
-
-            if not row:
-                return jsonify({
-                    "success": False,
-                    "message": "Client not found"
-                }), 404
-
-            if row[1]:
-                return jsonify({
-                    "success": False,
-                    "message": "Free trial already used"
-                }), 400
-
-            cur.execute("""
-                UPDATE clients
-                SET expires_on = NOW() + INTERVAL '14 days',
-                    used_free_trial = true,
-                    is_active = true
-                WHERE client_api_key = %s
-            """, (api_key,))
-
-            conn.commit()
-
-            return jsonify({
-                "success": True,
-                "message": "Free trial activated",
-                "days_left": 14
-            }), 200
-
-    except Exception as e:
-
-        if conn:
-            conn.rollback()
-
-        print("SET TIME ERROR:", str(e))
-
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 500
-
-    finally:
-        if conn:
-            conn.close()
-
-# ─────────────────────────────────────
-# UPDATE LEAD ATTENDED STATUS
-# ─────────────────────────────────────
-
-@app.route("/api/client/updateLeadStatus", methods=["POST"])
+@app.route("/api/client/update-lead-status", methods=["POST"])
 def update_lead_status():
 
     conn = None
@@ -483,34 +623,54 @@ def update_lead_status():
 
         data = request.get_json()
 
-        api_key = data.get("api_key")
         lead_id = data.get("lead_id")
         attended = data.get("attended")
+        api_key = data.get("api_key")
 
-        if not api_key or lead_id is None or attended is None:
+        # ── VALIDATION ─────────────────────
+
+        if lead_id is None or not api_key:
             return jsonify({
                 "success": False,
-                "message": "Missing fields"
+                "message": "Missing required fields"
+            }), 400
+
+        # STRICT BOOLEAN CHECK
+        if not isinstance(attended, bool):
+            return jsonify({
+                "success": False,
+                "message": "Invalid attended value"
             }), 400
 
         conn = get_conn()
 
         with conn.cursor() as cur:
 
-            # only update if lead belongs to this client
+            # ONLY UPDATE LEADS
+            # OWNED BY THIS CLIENT
+
             cur.execute("""
                 UPDATE leads
                 SET attended = %s
-                WHERE id = %s AND client_api_key = %s
-            """, (bool(attended), int(lead_id), api_key))
+                WHERE id = %s
+                AND client_api_key = %s
+            """, (
+                attended,
+                lead_id,
+                api_key
+            ))
 
+            # NO ROW UPDATED
             if cur.rowcount == 0:
+
+                conn.rollback()
+
                 return jsonify({
                     "success": False,
                     "message": "Lead not found or unauthorized"
-                }), 404
+                }), 403
 
-        conn.commit()
+            conn.commit()
 
         return jsonify({
             "success": True
@@ -518,11 +678,11 @@ def update_lead_status():
 
     except Exception as e:
 
+        print("UPDATE LEAD ERROR:", str(e))
+
         if conn:
             conn.rollback()
 
-        print("UPDATE LEAD STATUS ERROR:", str(e))
-
         return jsonify({
             "success": False,
             "message": str(e)
@@ -532,285 +692,6 @@ def update_lead_status():
 
         if conn:
             conn.close()
-
-
-# ─────────────────────────────────────
-# GET TRIAL STATUS
-# ─────────────────────────────────────
-
-@app.route("/api/client/trialStatus", methods=["GET"])
-def get_trial_status():
-
-    conn = None
-
-    try:
-        api_key = request.args.get("api_key")
-
-        if not api_key:
-            return jsonify({
-                "success": False,
-                "message": "Missing API key"
-            }), 400
-
-        conn = get_conn()
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-                SELECT used_free_trial
-                FROM clients
-                WHERE client_api_key = %s
-            """, (api_key,))
-
-            row = cur.fetchone()
-
-            if not row:
-                return jsonify({
-                    "success": False,
-                    "message": "Client not found"
-                }), 404
-
-            return jsonify({
-                "success": True,
-                "used_free_trial": row[0] or False
-            }), 200
-
-    except Exception as e:
-
-        print("GET TRIAL STATUS ERROR:", str(e))
-
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 500
-
-    finally:
-        if conn:
-            conn.close()
-
-
-# ─────────────────────────────────────
-# RAZORPAY — CREATE ORDER
-# ─────────────────────────────────────
-
-def get_razorpay_client():
-    if not razorpay or not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
-        return None
-
-    return razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
-
-
-def verify_razorpay_signature(order_id, payment_id, signature):
-    if not RAZORPAY_KEY_SECRET:
-        return False
-
-    payload = f"{order_id}|{payment_id}".encode("utf-8")
-    expected = hmac.new(
-        RAZORPAY_KEY_SECRET.encode("utf-8"),
-        payload,
-        hashlib.sha256
-    ).hexdigest()
-
-    return hmac.compare_digest(expected, signature)
-
-
-@app.route("/api/payment/create-order", methods=["POST"])
-def create_payment_order():
-
-    conn = None
-
-    try:
-        data = request.get_json() or {}
-        api_key = data.get("api_key")
-
-        if not api_key:
-            return jsonify({
-                "success": False,
-                "message": "Missing API key"
-            }), 400
-
-        client = get_razorpay_client()
-
-        if not client:
-            return jsonify({
-                "success": False,
-                "message": "Payment gateway is not configured on the server"
-            }), 503
-
-        conn = get_conn()
-
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id
-                FROM clients
-                WHERE client_api_key = %s
-            """, (api_key,))
-
-            if not cur.fetchone():
-                return jsonify({
-                    "success": False,
-                    "message": "Client not found"
-                }), 404
-
-        order = client.order.create({
-            "amount": MONTHLY_PLAN_AMOUNT_PAISE,
-            "currency": "INR",
-            "receipt": f"funnelos_{api_key[-12:]}_{int(time.time())}",
-            "payment_capture": 1
-        })
-
-        return jsonify({
-            "success": True,
-            "order_id": order["id"],
-            "amount": order["amount"],
-            "currency": order["currency"],
-            "key_id": RAZORPAY_KEY_ID
-        }), 200
-
-    except Exception as e:
-        print("CREATE ORDER ERROR:", str(e))
-
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 500
-
-    finally:
-        if conn:
-            conn.close()
-
-
-@app.route("/api/payment/verify", methods=["POST"])
-def verify_payment():
-
-    conn = None
-
-    try:
-        data = request.get_json() or {}
-
-        api_key = data.get("api_key")
-        order_id = data.get("razorpay_order_id")
-        payment_id = data.get("razorpay_payment_id")
-        signature = data.get("razorpay_signature")
-
-        if not api_key or not order_id or not payment_id or not signature:
-            return jsonify({
-                "success": False,
-                "message": "Missing payment verification fields"
-            }), 400
-
-        if not verify_razorpay_signature(order_id, payment_id, signature):
-            return jsonify({
-                "success": False,
-                "message": "Invalid payment signature"
-            }), 400
-
-        conn = get_conn()
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-                SELECT expires_on
-                FROM clients
-                WHERE client_api_key = %s
-            """, (api_key,))
-
-            row = cur.fetchone()
-
-            if not row:
-                return jsonify({
-                    "success": False,
-                    "message": "Client not found"
-                }), 404
-
-            # if they still have days left, extend from expires_on
-            # otherwise extend from now
-            existing_expires = row[0]
-
-            if existing_expires and existing_expires > datetime.now(timezone.utc):
-                base = "expires_on"
-            else:
-                base = "NOW()"
-
-            cur.execute(f"""
-                UPDATE clients
-                SET expires_on = {base} + INTERVAL '30 days',
-                    is_active = true
-                WHERE client_api_key = %s
-            """, (api_key,))
-
-            conn.commit()
-
-        return jsonify({
-            "success": True,
-            "message": "Payment verified and subscription activated",
-            "days_left": 30
-        }), 200
-
-    except Exception as e:
-        if conn:
-            conn.rollback()
-
-        print("VERIFY PAYMENT ERROR:", str(e))
-
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 500
-
-    finally:
-        if conn:
-            conn.close()
-
-#cron job
-
-CRON_SECRET = os.getenv("CRON_SECRET")
-
-@app.route("/api/cron/expire", methods=["POST"])
-def cron_expire():
-
-    conn = None
-
-    try:
-        secret = request.headers.get("x-cron-secret")
-
-        if secret != CRON_SECRET:
-            return jsonify({
-                "success": False,
-                "message": "Unauthorized"
-            }), 401
-
-        conn = get_conn()
-
-        with conn.cursor() as cur:
-
-            cur.execute("""
-                UPDATE clients
-                SET is_active = false
-                WHERE expires_on < NOW()
-                AND is_active = true
-            """)
-
-            affected = cur.rowcount
-            conn.commit()
-
-            return jsonify({
-                "success": True,
-                "expired": affected
-            }), 200
-
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 500
-
-    finally:
-        if conn:
-            conn.close()
-
 
 #uptime robot 
 
