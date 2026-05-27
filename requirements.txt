@@ -6,4 +6,5 @@ gunicorn==22.0.0
 twilio
 flask-mail
 resend
+setuptools
 razorpay==1.4.2
