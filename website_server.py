@@ -3,15 +3,13 @@ import hmac
 import os
 import psycopg
 import time
+import razorpay
 
 from datetime import datetime,timezone, timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-try:
-    import razorpay
-except ImportError:
-    razorpay = None
+
 
 app = Flask(__name__)
 
