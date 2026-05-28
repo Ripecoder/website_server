@@ -3,7 +3,7 @@ import hmac
 import os
 import psycopg
 import time
-import razorpay
+from razorpay import Client
 
 from datetime import datetime,timezone, timedelta
 from flask import Flask, request, jsonify
