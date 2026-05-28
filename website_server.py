@@ -29,10 +29,16 @@ RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 MONTHLY_PLAN_AMOUNT_PAISE = 499900
 
-rzp_client = razorpay.Client(auth=(
-    RAZORPAY_KEY_ID,
-    RAZORPAY_KEY_SECRET
-))
+if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+    raise Exception("Missing Razorpay env variables")
+
+rzp_client = None
+
+def init_clients():
+    global rzp_client
+    rzp_client = Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+
+init_clients()
 
 def get_conn():
     return psycopg.connect(
