@@ -576,7 +576,6 @@ def check_subscription_status():
             }), 404
 
         expiry_date = result[0]
-        expiry_date = expiry_date + 1
         # NO SUBSCRIPTION
         if not expiry_date:
             return jsonify({
@@ -596,7 +595,7 @@ def check_subscription_status():
         time_remaining = expiry_date - current_time
 
         days_remaining = max(0, time_remaining.days)
-
+        days_remaining = days_remaining + 1
         return jsonify({
             "success": True,
             "subscription_active": subscription_active,
