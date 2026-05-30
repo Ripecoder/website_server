@@ -576,7 +576,7 @@ def check_subscription_status():
             }), 404
 
         expiry_date = result[0]
-
+        expiry_date = expiry_date + 1
         # NO SUBSCRIPTION
         if not expiry_date:
             return jsonify({
