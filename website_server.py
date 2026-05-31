@@ -595,7 +595,9 @@ def check_subscription_status():
         time_remaining = expiry_date - current_time
 
         days_remaining = max(0, time_remaining.days)
-        days_remaining = days_remaining + 1
+        if days_remaining > 0:
+            days_remaining = days_remaining + 1
+            
         return jsonify({
             "success": True,
             "subscription_active": subscription_active,
